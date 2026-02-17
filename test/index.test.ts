@@ -12,17 +12,11 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { describe, beforeEach, afterEach, test, expect } from "vitest";
 
-const issueCreatedBody = { body: "Thanks for opening this issue!" };
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const privateKey = fs.readFileSync(
   path.join(__dirname, "fixtures/mock-cert.pem"),
   "utf-8",
-);
-
-const payload = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "fixtures/issues.opened.json"), "utf-8"),
 );
 
 describe("My Probot app", () => {
@@ -43,26 +37,42 @@ describe("My Probot app", () => {
     probot.load(myProbotApp);
   });
 
-  test("creates a comment when an issue is opened", async () => {
+  test("receives pull_request.labeled event", async () => {
     const mock = nock("https://api.github.com")
-      // Test that we correctly return a test token
       .post("/app/installations/2/access_tokens")
       .reply(200, {
         token: "test",
         permissions: {
-          issues: "write",
+          pull_requests: "write",
         },
       })
+      
+      // The app will search for locked PRs
+      .get("/search/issues?q=repo%3Ahiimbex%2Ftesting-things%20is%3Apr%20is%3Aopen%20label%3A%22processing-merge%22")
+      .reply(200, { total_count: 0, items: [] })
 
-      // Test that a comment is posted
-      .post("/repos/hiimbex/testing-things/issues/1/comments", (body: any) => {
-        expect(body).toMatchObject(issueCreatedBody);
-        return true;
-      })
-      .reply(200);
+      // Then it searches for candidates
+      .get("/search/issues?q=repo%3Ahiimbex%2Ftesting-things%20is%3Apr%20is%3Aopen%20label%3A%22ready-to-merge%22%20-label%3A%22processing-merge%22%20sort%3Acreated-asc")
+      .reply(200, { total_count: 0, items: [] });
 
-    // Receive a webhook event
-    await probot.receive({ name: "issues", payload });
+    await probot.receive({
+      name: "pull_request",
+      payload: {
+        action: "labeled",
+        pull_request: {
+          number: 1,
+          user: { login: "hiimbex" },
+          head: { sha: "123456" },
+          base: { ref: "main" },
+          state: "open",
+        },
+        repository: {
+          name: "testing-things",
+          owner: { login: "hiimbex" },
+        },
+        installation: { id: 2 },
+      },
+    });
 
     expect(mock.pendingMocks()).toStrictEqual([]);
   });
