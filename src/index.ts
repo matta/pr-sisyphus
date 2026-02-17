@@ -10,7 +10,8 @@ const LABELS = {
 
 const STALE_LOCK_MINUTES = 15;
 
-export default (app: Probot, { addHandler }: ApplicationFunctionOptions) => {
+export default (app: Probot, options: ApplicationFunctionOptions) => {
+  const { addHandler } = options;
   app.log.info("Merge Helper Bot loaded");
 
   // ----------------------------------------------------------------------
@@ -44,11 +45,18 @@ export default (app: Probot, { addHandler }: ApplicationFunctionOptions) => {
         try {
           const appOctokit = await app.auth();
           const installations = await appOctokit.paginate("GET /app/installations", { per_page: 100 });
+          app.log.info(`Found ${installations.length} installations`);
 
           for (const installation of installations) {
+            app.log.info(`Processing installation ${installation.id}`);
             try {
               const installationOctokit = await app.auth(installation.id);
-              const repos = await installationOctokit.paginate("GET /installation/repositories", { per_page: 100 });
+              const repos: any[] = await installationOctokit.paginate(
+                "GET /installation/repositories",
+                { per_page: 100 },
+                (response: any) => response.data.repositories
+              );
+              app.log.info(`Found ${repos.length} repositories for installation ${installation.id}`);
 
               for (const repo of repos) {
                 await processRepo(installationOctokit, repo.owner.login, repo.name, app.log);
@@ -76,11 +84,14 @@ export default (app: Probot, { addHandler }: ApplicationFunctionOptions) => {
 
   async function processRepo(octokit: Context['octokit'], owner: string, repo: string, log: Context['log']) {
     const logger = log.child({ repo: `${owner}/${repo}` });
+    logger.info(`Starting sweep for ${owner}/${repo}`);
 
     // A. CHECK FOR STUCK LOCKS
     // ------------------------
+    const lockedPrQuery = `repo:${owner}/${repo} is:pr is:open label:"${LABELS.LOCK}"`;
+    logger.debug(`Searching for locked PRs with query: ${lockedPrQuery}`);
     const lockedPrs = await octokit.rest.search.issuesAndPullRequests({
-      q: `repo:${owner}/${repo} is:pr is:open label:"${LABELS.LOCK}"`,
+      q: lockedPrQuery,
     });
 
     if (lockedPrs.data.total_count > 0) {
@@ -110,9 +121,13 @@ export default (app: Probot, { addHandler }: ApplicationFunctionOptions) => {
 
     // B. FIND NEXT CANDIDATE (FIFO)
     // -----------------------------
+    const candidateQuery = `repo:${owner}/${repo} is:pr is:open label:"${LABELS.TRIGGER}" -label:"${LABELS.LOCK}" sort:created-asc`;
+    logger.debug(`Searching for merge candidates with query: ${candidateQuery}`);
     const candidates = await octokit.rest.search.issuesAndPullRequests({
-      q: `repo:${owner}/${repo} is:pr is:open label:"${LABELS.TRIGGER}" -label:"${LABELS.LOCK}" sort:created-asc`,
+      q: candidateQuery,
     });
+
+    logger.info(`Found ${candidates.data.total_count} candidates for ${owner}/${repo}`);
 
     if (candidates.data.total_count === 0) {
       return; // Nothing to do
@@ -130,6 +145,7 @@ export default (app: Probot, { addHandler }: ApplicationFunctionOptions) => {
     const { data: pr } = await octokit.rest.pulls.get({
       owner, repo, pull_number: prNumber
     });
+    logger.debug(`PR #${prNumber} mergeable_state: ${pr.mergeable_state}`);
 
     // D. EVALUATE STATE
     // -----------------
@@ -163,6 +179,7 @@ export default (app: Probot, { addHandler }: ApplicationFunctionOptions) => {
     const checks = await octokit.rest.checks.listForRef({
       owner, repo, ref: pr.head.sha
     });
+    logger.debug(`Found ${checks.data.check_runs.length} check runs`);
 
     const anyFailed = checks.data.check_runs.some(
       (run) => run.conclusion === "failure" || run.conclusion === "timed_out"
@@ -170,6 +187,7 @@ export default (app: Probot, { addHandler }: ApplicationFunctionOptions) => {
     const anyPending = checks.data.check_runs.some(
       (run) => run.status === "in_progress" || run.status === "queued"
     );
+    logger.debug(`anyFailed: ${anyFailed}, anyPending: ${anyPending}`);
 
     if (anyFailed) {
       await failPr(octokit, owner, repo, prNumber, LABELS.FAIL, "CI checks failed. Please fix and re-apply label.");
@@ -183,17 +201,28 @@ export default (app: Probot, { addHandler }: ApplicationFunctionOptions) => {
 
     // Case 4: Ready to Merge
     // (We rely on 'clean' or 'has_hooks' - GitHub is weird about exact states sometimes)
-    if (["clean", "has_hooks", "unstable"].includes(pr.mergeable_state)) {
+    if (["clean", "has_hooks", "unstable"].includes(pr.mergeable_state as string)) {
        logger.info(`Merging PR #${prNumber}`);
        try {
          await octokit.rest.pulls.merge({
            owner, repo, pull_number: prNumber, merge_method: "squash"
          });
          
-         // Cleanup
-         // GitHub automatically closes the PR, but we should remove our trigger label
-         // (The lock label doesn't strictly need removal on closed PRs, but it's tidy)
-         // Note: merging closes the PR, so 'is:open' search won't find it next time.
+          // Cleanup
+          try {
+            await octokit.rest.issues.removeLabel({
+              owner, repo, issue_number: prNumber, name: LABELS.TRIGGER
+            });
+          } catch (e) {
+            logger.debug(`Could not remove ${LABELS.TRIGGER}: ${e}`);
+          }
+          try {
+            await octokit.rest.issues.removeLabel({
+              owner, repo, issue_number: prNumber, name: LABELS.LOCK
+            });
+          } catch (e) {
+            logger.debug(`Could not remove ${LABELS.LOCK}: ${e}`);
+          }
        } catch (e) {
          logger.error(`Merge failed: ${e}`);
          // Don't fail the PR yet, could be a transient API error.
