@@ -34,7 +34,7 @@ describe("My Probot app", () => {
       }),
     });
     // Load our app into probot
-    probot.load(myProbotApp);
+    probot.load(myProbotApp, { addHandler: () => {} });
   });
 
   test("receives pull_request.labeled event", async () => {

@@ -1,4 +1,5 @@
 import { Probot, Context, ApplicationFunctionOptions } from "probot";
+import { Router } from "express";
 
 // Configuration
 const LABELS = {
@@ -10,7 +11,7 @@ const LABELS = {
 
 const STALE_LOCK_MINUTES = 15;
 
-export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
+export default (app: Probot, { addHandler }: ApplicationFunctionOptions) => {
   app.log.info("Merge Helper Bot loaded");
 
   // ----------------------------------------------------------------------
@@ -37,12 +38,9 @@ export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
   // 2. THE SWEEPER (The "Pull" / Reconciliation)
   // ----------------------------------------------------------------------
   
-  if (getRouter) {
-    // Expose a route for a cron job to hit (e.g., Cloud Scheduler)
-    // PATCH /pr-sisyphus/scheduler
-    // or GET /pr-sisyphus/scheduler (if you just use a browser/simple cron)
-    const router = getRouter("/pr-sisyphus");
-    router.get("/scheduler", async (_: unknown, res: any) => {
+  if (addHandler) {
+    const router = Router();
+    router.get("/pr-sisyphus/scheduler", async (_: unknown, res: any) => {
       app.log.info("Scheduled sweep initiated");
       try {
         const appOctokit = await app.auth();
@@ -66,6 +64,8 @@ export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
         res.status(500).send("Scheduled sweep failed");
       }
     });
+
+    addHandler(router as any);
   }
 
   // ----------------------------------------------------------------------
@@ -77,7 +77,7 @@ export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
 
     // A. CHECK FOR STUCK LOCKS
     // ------------------------
-    const lockedPrs = await octokit.search.issuesAndPullRequests({
+    const lockedPrs = await octokit.rest.search.issuesAndPullRequests({
       q: `repo:${owner}/${repo} is:pr is:open label:"${LABELS.LOCK}"`,
     });
 
@@ -92,10 +92,10 @@ export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
 
       if (diffMins > STALE_LOCK_MINUTES) {
         logger.warn(`Found stale lock on PR #${lockedPr.number}. Releasing.`);
-        await octokit.issues.removeLabel({
+        await octokit.rest.issues.removeLabel({
           owner, repo, issue_number: lockedPr.number, name: LABELS.LOCK
         });
-        await octokit.issues.createComment({
+        await octokit.rest.issues.createComment({
           owner, repo, issue_number: lockedPr.number, 
           body: "🤖 **Merge Bot:** Automation was stuck. I have reset the lock. Waiting for next cycle."
         });
@@ -108,7 +108,7 @@ export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
 
     // B. FIND NEXT CANDIDATE (FIFO)
     // -----------------------------
-    const candidates = await octokit.search.issuesAndPullRequests({
+    const candidates = await octokit.rest.search.issuesAndPullRequests({
       q: `repo:${owner}/${repo} is:pr is:open label:"${LABELS.TRIGGER}" -label:"${LABELS.LOCK}" sort:created-asc`,
     });
 
@@ -120,12 +120,12 @@ export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
     
     // C. ENGAGE (Apply Lock)
     // ----------------------
-    await octokit.issues.addLabels({
+    await octokit.rest.issues.addLabels({
       owner, repo, issue_number: prNumber, labels: [LABELS.LOCK]
     });
     
     // Fetch full PR details (search results are partial)
-    const { data: pr } = await octokit.pulls.get({
+    const { data: pr } = await octokit.rest.pulls.get({
       owner, repo, pull_number: prNumber
     });
 
@@ -142,7 +142,7 @@ export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
     if (pr.mergeable_state === "behind") {
       logger.info(`PR #${prNumber} is behind. Updating branch.`);
       try {
-        await octokit.pulls.updateBranch({
+        await octokit.rest.pulls.updateBranch({
           owner, repo, pull_number: prNumber
         });
         // We stop here. The update triggers a 'synchronize' event (and CI), 
@@ -158,7 +158,7 @@ export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
     // Case 3: CI Status
     // If you don't use Branch Protection, 'mergeable_state' might report 'clean' even if CI failed.
     // We must manually check CI.
-    const checks = await octokit.checks.listForRef({
+    const checks = await octokit.rest.checks.listForRef({
       owner, repo, ref: pr.head.sha
     });
 
@@ -184,7 +184,7 @@ export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
     if (["clean", "has_hooks", "unstable"].includes(pr.mergeable_state)) {
        logger.info(`Merging PR #${prNumber}`);
        try {
-         await octokit.pulls.merge({
+         await octokit.rest.pulls.merge({
            owner, repo, pull_number: prNumber, merge_method: "squash"
          });
          
@@ -203,17 +203,17 @@ export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
 
   // Helper to "Kick back" the PR to the user
   async function failPr(octokit: Context['octokit'], owner: string, repo: string, prNumber: number, label: string, message: string) {
-    await octokit.issues.createComment({
+    await octokit.rest.issues.createComment({
       owner, repo, issue_number: prNumber, body: `🤖 **Merge Bot:** ${message}`
     });
-    await octokit.issues.addLabels({
+    await octokit.rest.issues.addLabels({
       owner, repo, issue_number: prNumber, labels: [label]
     });
     // Remove the trigger and lock so we don't loop
-    await octokit.issues.removeLabel({
+    await octokit.rest.issues.removeLabel({
       owner, repo, issue_number: prNumber, name: LABELS.TRIGGER
     });
-    await octokit.issues.removeLabel({
+    await octokit.rest.issues.removeLabel({
       owner, repo, issue_number: prNumber, name: LABELS.LOCK
     });
   }
