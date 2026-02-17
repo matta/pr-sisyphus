@@ -1,5 +1,5 @@
 {
-  "name": "patch-pilot",
+  "name": "pr-sisyphus",
   "version": "1.0.0",
   "private": true,
   "description": "A simple merge queue bot for GitHub",

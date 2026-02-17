@@ -16,7 +16,7 @@ Original Probot apps often rely on long-running `setInterval` loops for backgrou
 
 **Solution:**
 We expose a dedicated HTTP endpoint for triggering background reconciliation sweeps:
-- **URL:** `GET /patch-pilot/scheduler` (or `PATCH`)
+- **URL:** `GET /pr-sisyphus/scheduler` (or `PATCH`)
 - **Mechanism:** This endpoint iterates through all verified installations and repositories, performing the merge logic on demand.
 - **Trigger:** This endpoint functions as a webhook target for an external scheduler (e.g., Cloud Scheduler, GitHub Actions cron workflow, cron-job.org).
 

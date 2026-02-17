@@ -2,7 +2,7 @@
 
 ## Bulk Actions & Permissions
 - **Always Verify Intent**: Actions triggered by direct user interaction (e.g., replying to a comment) are implicitly authorized. However, **bulk operations** (scanning all open issues, mass-labeling) must require explicit opt-in.
-- **Example**: The `stale` app only processes repositories that contain a `.github/stale.yml` configuration file. Similarly, Patch Pilot should only activate its merge queue logic if a configuration file (e.g., `.github/patch-pilot.yml`) is present.
+- **Example**: The `stale` app only processes repositories that contain a `.github/stale.yml` configuration file. Similarly, Patch Pilot should only activate its merge queue logic if a configuration file (e.g., `.github/pr-sisyphus.yml`) is present.
 
 ## Dry Run Capabilities
 - **Safety First**: Any destructive action or automated workflow should support a "dry run" mode.
@@ -39,12 +39,12 @@
   ```
 - Extend from a specific file path:
   ```yaml
-  _extends: my-org/settings:.github/patch-pilot-base.yml
+  _extends: my-org/settings:.github/pr-sisyphus-base.yml
   ```
 
 ## Implementation Plan for Patch Pilot
 To align with these principles, Patch Pilot will:
-1.  Check for `.github/patch-pilot.yml` before processing any repository.
+1.  Check for `.github/pr-sisyphus.yml` before processing any repository.
 2.  If the file is missing, the scheduler will skip the repository or log a "dry run" message.
 3.  Implement a `dryRun: true/false` flag in the config.
 4.  Utilize `context.config` to load and merge settings, supporting `_extends`.

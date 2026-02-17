@@ -39,9 +39,9 @@ export default (app: Probot, { getRouter }: ApplicationFunctionOptions) => {
   
   if (getRouter) {
     // Expose a route for a cron job to hit (e.g., Cloud Scheduler)
-    // PATCH /patch-pilot/scheduler
-    // or GET /patch-pilot/scheduler (if you just use a browser/simple cron)
-    const router = getRouter("/patch-pilot");
+    // PATCH /pr-sisyphus/scheduler
+    // or GET /pr-sisyphus/scheduler (if you just use a browser/simple cron)
+    const router = getRouter("/pr-sisyphus");
     router.get("/scheduler", async (_: unknown, res: any) => {
       app.log.info("Scheduled sweep initiated");
       try {
