@@ -30,7 +30,7 @@
     "@types/pg": "8.15.1"
   },
   "engines": {
-    "node": ">= 18"
+    "node": ">= 24"
   },
   "type": "module"
 }
