@@ -1,5 +1,4 @@
 import { Probot, Context, ApplicationFunctionOptions } from "probot";
-import { Router } from "express";
 
 // Configuration
 const LABELS = {
@@ -39,33 +38,36 @@ export default (app: Probot, { addHandler }: ApplicationFunctionOptions) => {
   // ----------------------------------------------------------------------
   
   if (addHandler) {
-    const router = Router();
-    router.get("/pr-sisyphus/scheduler", async (_: unknown, res: any) => {
-      app.log.info("Scheduled sweep initiated");
-      try {
-        const appOctokit = await app.auth();
-        const installations = await appOctokit.paginate("GET /app/installations", { per_page: 100 });
+    addHandler(async (req, res) => {
+      if (req.method === "GET" && req.url === "/pr-sisyphus/scheduler") {
+        app.log.info("Scheduled sweep initiated");
+        try {
+          const appOctokit = await app.auth();
+          const installations = await appOctokit.paginate("GET /app/installations", { per_page: 100 });
 
-        for (const installation of installations) {
-          try {
-            const installationOctokit = await app.auth(installation.id);
-            const repos = await installationOctokit.paginate("GET /installation/repositories", { per_page: 100 });
+          for (const installation of installations) {
+            try {
+              const installationOctokit = await app.auth(installation.id);
+              const repos = await installationOctokit.paginate("GET /installation/repositories", { per_page: 100 });
 
-            for (const repo of repos) {
-              await processRepo(installationOctokit, repo.owner.login, repo.name, app.log);
+              for (const repo of repos) {
+                await processRepo(installationOctokit, repo.owner.login, repo.name, app.log);
+              }
+            } catch (e) {
+              app.log.error(`Failed to process installation ${installation.id}: ${e}`);
             }
-          } catch (e) {
-            app.log.error(`Failed to process installation ${installation.id}: ${e}`);
           }
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end("Scheduled sweep completed.");
+        } catch (e: any) {
+          app.log.error(`Scheduled sweep failed: ${e}`);
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end("Scheduled sweep failed");
         }
-        res.send("Scheduled sweep completed.");
-      } catch (e) {
-        app.log.error(`Scheduled sweep failed: ${e}`);
-        res.status(500).send("Scheduled sweep failed");
+        return true;
       }
+      return false;
     });
-
-    addHandler(router as any);
   }
 
   // ----------------------------------------------------------------------
